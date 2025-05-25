@@ -20,7 +20,7 @@ sys.path.append(os.path.join(project_root, 'deepcode_insight'))
 sys.path.append(project_root)
 
 # Import config
-from config import config
+from deepcode_insight.config import config
 
 class TestRAGContextAgentMocked:
     """Test suite cho RAGContextAgent với mocked dependencies"""
@@ -119,9 +119,7 @@ class TestRAGContextAgentMocked:
         mock_embedding.get_text_embedding.return_value = [0.1] * 1536
         mocks['OpenAIEmbedding'] = Mock(return_value=mock_embedding)
         
-        # Mock ServiceContext
-        mock_service_context = Mock()
-        mocks['ServiceContext'] = Mock(from_defaults=Mock(return_value=mock_service_context))
+        # ServiceContext is not used in current implementation
         
         return mocks
     
@@ -150,8 +148,7 @@ class TestRAGContextAgentMocked:
     @patch('deepcode_insight.agents.rag_context.VectorStoreIndex')
     @patch('deepcode_insight.agents.rag_context.QdrantVectorStore')
     @patch('deepcode_insight.agents.rag_context.OpenAIEmbedding')
-    @patch('deepcode_insight.agents.rag_context.ServiceContext')
-    def test_rag_context_agent_initialization(self, mock_service_context, mock_openai_embedding, 
+    def test_rag_context_agent_initialization(self, mock_openai_embedding, 
                                             mock_qdrant_vector_store, mock_vector_store_index,
                                             mock_document, mock_ast_class, mock_openai_class, mock_qdrant_class, 
                                             mock_qdrant_client, mock_openai_client, mock_ast_parser):

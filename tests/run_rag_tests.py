@@ -191,7 +191,7 @@ def run_real_data_tests():
     print("\n🧪 === Running Real Data Tests ===")
     
     # Check if API keys are configured
-    from config import config
+    from deepcode_insight.config import config
     
     if not config.OPENAI_API_KEY or config.OPENAI_API_KEY == "your_openai_api_key_here":
         print("⚠️ OpenAI API key not configured. Skipping real data tests.")

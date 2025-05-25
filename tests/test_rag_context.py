@@ -14,7 +14,7 @@ sys.path.append(os.path.join(project_root, 'deepcode_insight'))
 sys.path.append(project_root)
 
 # Import config
-from config import config
+from deepcode_insight.config import config
 
 def test_rag_context_basic():
     """Test basic functionality của RAGContextAgent"""

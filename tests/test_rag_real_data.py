@@ -15,7 +15,7 @@ sys.path.append(os.path.join(project_root, 'deepcode_insight'))
 sys.path.append(project_root)
 
 # Import config first
-from config import config
+from deepcode_insight.config import config
 
 def check_prerequisites() -> bool:
     """Check if prerequisites are met for real data testing"""
@@ -628,7 +628,7 @@ def test_config_integration():
         
         # Test environment setup
         print("\n3. Testing environment setup...")
-        from config import setup_environment
+        from deepcode_insight.config import setup_environment
         env_template = setup_environment()
         print("   ✅ Environment setup completed")
         

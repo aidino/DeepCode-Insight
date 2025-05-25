@@ -18,7 +18,7 @@ def main():
     
     try:
         # Import config
-        from config import config
+        from deepcode_insight.config import config
         
         print("1. 🔧 Configuration Status:")
         config.print_config()

@@ -109,7 +109,7 @@ EXCLUDE_PATTERNS=__pycache__,node_modules,.git,*.pyc,*.class
         # Import and test config
         project_root = os.path.dirname(os.path.dirname(__file__))
         sys.path.append(project_root)
-        from config import config
+        from deepcode_insight.config import config
         
         config.print_config()
         
@@ -133,7 +133,7 @@ def test_setup():
     try:
         # Test config loading
         print("1. Testing config loading...")
-        from config import config
+        from deepcode_insight.config import config
         print("   ✅ Config loaded successfully")
         
         # Test Qdrant connection

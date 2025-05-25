@@ -1,20 +1,22 @@
 """
-Agents package cho LangGraph Demo
-Chứa các agent classes để xử lý repository analysis
+Agents package cho DeepCode-Insight
+Chứa các AI agent classes để xử lý code analysis workflow
 """
 
 from .code_fetcher import CodeFetcherAgent
 from .static_analyzer import StaticAnalysisAgent
-# from .llm_orchestrator import LLMOrchestratorAgent, create_llm_orchestrator_agent, llm_orchestrator_node
-# from .reporter import ReportingAgent, create_reporting_agent, reporting_node
+from .llm_orchestrator import LLMOrchestratorAgent
+from .rag_context import RAGContextAgent
+from .diagram_generator import DiagramGenerationAgent
+from .solution_suggester import SolutionSuggestionAgent
+from .reporter import ReportingAgent
 
 __all__ = [
     'CodeFetcherAgent', 
     'StaticAnalysisAgent', 
-    # 'LLMOrchestratorAgent',
-    # 'create_llm_orchestrator_agent',
-    # 'llm_orchestrator_node',
-    # 'ReportingAgent',
-    # 'create_reporting_agent',
-    # 'reporting_node'
+    'LLMOrchestratorAgent',
+    'RAGContextAgent',
+    'DiagramGenerationAgent',
+    'SolutionSuggestionAgent',
+    'ReportingAgent',
 ] 

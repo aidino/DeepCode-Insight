@@ -27,10 +27,8 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from ..parsers.ast_parser import ASTParsingAgent
 
-# Add project root to path for config
-project_root = os.path.join(os.path.dirname(__file__), '..', '..')
-sys.path.append(project_root)
-from config import config
+# Import config from package
+from ..config import config
 
 
 class RAGContextAgent:
@@ -68,23 +66,32 @@ class RAGContextAgent:
             self.logger.warning("OpenAI API key not provided. Some features may not work.")
         
         try:
-            # Initialize Qdrant client
-            self.qdrant_client = QdrantClient(
-                host=self.qdrant_host,
-                port=self.qdrant_port,
-                timeout=60
-            )
-            
-            # Initialize AST parser
+            # Initialize AST parser first (always works)
             self.ast_parser = ASTParsingAgent()
             
             # Initialize LlamaIndex components
             self._init_llama_index()
             
-            # Create or get collection
-            self._setup_collection()
-            
-            self.logger.info(f"RAGContextAgent initialized successfully with collection: {collection_name}")
+            # Try to initialize Qdrant client
+            try:
+                self.qdrant_client = QdrantClient(
+                    host=self.qdrant_host,
+                    port=self.qdrant_port,
+                    timeout=60
+                )
+                
+                # Create or get collection
+                self._setup_collection()
+                self.qdrant_available = True
+                self.logger.info(f"RAGContextAgent initialized successfully with collection: {self.collection_name}")
+                
+            except Exception as qdrant_error:
+                self.logger.warning(f"Qdrant not available: {qdrant_error}")
+                self.logger.info("RAGContextAgent initialized in offline mode (no vector storage)")
+                self.qdrant_client = None
+                self.vector_store = None
+                self.index = None
+                self.qdrant_available = False
             
         except Exception as e:
             self.logger.error(f"Failed to initialize RAGContextAgent: {e}")
@@ -93,21 +100,28 @@ class RAGContextAgent:
     def _init_llama_index(self):
         """Initialize LlamaIndex settings và components"""
         try:
-            # Configure embeddings
-            embed_model = OpenAIEmbedding(
-                model=config.OPENAI_EMBEDDING_MODEL,
-                dimensions=config.VECTOR_DIMENSION
-            )
+            # Check if OpenAI API key is available
+            if config.OPENAI_API_KEY and config.OPENAI_API_KEY != "your_openai_api_key_here":
+                # Configure embeddings
+                embed_model = OpenAIEmbedding(
+                    model=config.OPENAI_EMBEDDING_MODEL,
+                    dimensions=config.VECTOR_DIMENSION
+                )
+                
+                # Configure LLM
+                llm = OpenAI(
+                    model=config.OPENAI_MODEL,
+                    temperature=0.1
+                )
+                
+                # Set global settings
+                Settings.embed_model = embed_model
+                Settings.llm = llm
+            else:
+                # Use mock/default settings when no API key
+                self.logger.warning("OpenAI API key not configured, using default settings")
+                # Don't set LLM and embedding model - use defaults
             
-            # Configure LLM
-            llm = OpenAI(
-                model=config.OPENAI_MODEL,
-                temperature=0.1
-            )
-            
-            # Set global settings
-            Settings.embed_model = embed_model
-            Settings.llm = llm
             Settings.chunk_size = config.CHUNK_SIZE
             Settings.chunk_overlap = config.CHUNK_OVERLAP
             
@@ -385,7 +399,7 @@ class RAGContextAgent:
             bool: Success status
         """
         try:
-            # Chunk code file
+            # Chunk code file (always works)
             documents = self.chunk_code_file(code, filename, language)
             
             # Add additional metadata if provided
@@ -393,11 +407,14 @@ class RAGContextAgent:
                 for doc in documents:
                     doc.metadata.update(metadata)
             
-            # Add documents to index
-            for doc in documents:
-                self.index.insert(doc)
+            # Add documents to index if Qdrant is available
+            if self.qdrant_available and self.index:
+                for doc in documents:
+                    self.index.insert(doc)
+                self.logger.info(f"Successfully indexed {filename} with {len(documents)} chunks")
+            else:
+                self.logger.info(f"Chunked {filename} into {len(documents)} documents (offline mode)")
             
-            self.logger.info(f"Successfully indexed {filename} with {len(documents)} chunks")
             return True
             
         except Exception as e:
@@ -520,6 +537,15 @@ class RAGContextAgent:
             Dict với query results
         """
         try:
+            # Check if Qdrant is available
+            if not self.qdrant_available or not self.index:
+                return {
+                    "query": query_text,
+                    "error": "Vector search not available (offline mode)",
+                    "total_results": 0,
+                    "results": []
+                }
+            
             # Create retriever
             retriever = VectorIndexRetriever(
                 index=self.index,

@@ -1,8 +1,3 @@
-Chắc chắn rồi! Dưới đây là Roadmap Phát triển Chi tiết cho "Hệ thống Đánh giá Mã nguồn Chuyên sâu", được thiết kế đặc biệt để **tận dụng tối đa sức mạnh của IDE Cursor AI** trong từng bước. Roadmap này tập trung vào *quy trình làm việc* và *cách bạn tương tác* với Cursor để xây dựng và kiểm thử dự án.
-
-**Triết lý cốt lõi:** Xem Cursor không chỉ là một editor, mà là một **trợ lý lập trình viên AI**, một "đồng nghiệp" ảo hiểu rõ dự án của bạn. Chúng ta sẽ "dạy" nó về dự án và sử dụng nó để tăng tốc mọi khâu.
-
----
 
 ## Tổng quan Quy trình làm việc với Cursor AI
 
@@ -90,6 +85,4 @@ Trước khi đi vào chi tiết, đây là cách chúng ta sẽ sử dụng Cur
 | **Cải thiện Báo cáo (XAI)** | `Cursor: Enhance the HTML report using Mermaid.js. Modify @LLMOrchestratorAgent prompts to ask for 'Chain-of-Thought' explanations and display them in the report.` | `Cursor: How can I test the rendering and interactivity of the new HTML/Mermaid.js report? Suggest tools or strategies.` |
 | **MLOps & Bảo trì** | `Cursor: Implement structured logging (e.g., using 'loguru') across all agents. Add utilities to track LLM costs.` | `Cursor: Help me design a regression testing strategy for when I update LLM models or Tree-sitter grammars.` |
 
----
-
-Bằng cách tuân theo roadmap này và tích cực "hợp tác" với Cursor AI, bạn có thể xây dựng hệ thống đánh giá mã nguồn một cách hiệu quả, có cấu trúc, và tận dụng được những tiến bộ mới nhất trong lĩnh vực AI hỗ trợ lập trình. Hãy nhớ, chìa khóa là **liên tục giao tiếp và cung cấp ngữ cảnh** cho Cursor.
+.

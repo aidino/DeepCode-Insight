@@ -1,10 +1,13 @@
 [tool.poetry]
-name = "langgraph-demo"
-version = "0.1.0"
-description = "Demo LangGraph project with two agents passing messages"
-authors = ["Your Name <your.email@example.com>"]
-readme = "README.md"
-package-mode = false
+name = "deepcode-insight"
+version = "1.0.0"
+description = "AI-Powered Code Analysis Tool using LangGraph workflow"
+authors = ["DeepCode-Insight Team <team@deepcode-insight.com>"]
+readme = "deepcode_insight/docs/README.md"
+packages = [{include = "deepcode_insight"}]
+
+[tool.poetry.scripts]
+deepcode-insight = "deepcode_insight.cli.cli:cli"
 
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"

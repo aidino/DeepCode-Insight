@@ -1,0 +1,52 @@
+# DeepCode-Insight Requirements
+
+# Core dependencies
+tree-sitter==0.20.4
+tree-sitter-python==0.20.4
+tree-sitter-java==0.20.2
+
+# RAG and Vector Database
+llama-index==0.10.17
+qdrant-client==1.7.3
+llama-index-vector-stores-qdrant==0.2.8
+tree-sitter-language-pack==0.0.8
+
+# OpenAI Integration
+openai==1.12.0
+llama-index-embeddings-openai==0.1.7
+llama-index-llms-openai==0.1.15
+
+# Google AI Integration (optional)
+google-generativeai==0.4.0
+
+# Environment and Configuration
+python-dotenv==1.0.1
+
+# Web Framework (for future UI)
+fastapi==0.109.2
+uvicorn==0.27.1
+
+# Data Processing
+numpy==1.26.4
+pandas==2.2.0
+
+# HTTP Client
+aiohttp==3.9.3
+requests==2.31.0
+
+# Utilities
+pydantic==2.6.1
+typing-extensions==4.9.0
+
+# Development and Testing
+pytest==8.0.0
+pytest-asyncio==0.23.5
+black==24.2.0
+flake8==7.0.0
+
+# Logging and Monitoring
+structlog==24.1.0
+
+# Optional: Jupyter for analysis
+jupyter==1.0.0
+ipykernel==6.29.2 

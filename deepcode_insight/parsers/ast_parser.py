@@ -1,47 +1,57 @@
-"""ASTParsingAgent - Parse Python code với tree-sitter"""
+"""ASTParsingAgent - Parse Python và Java code với tree-sitter"""
 
 import logging
 from typing import Dict, List, Optional, Any, Union
 import tree_sitter_python as tspython
+import tree_sitter_java as tsjava
 from tree_sitter import Language, Parser, Node
 
 
 class ASTParsingAgent:
-    """Agent để parse Python code thành AST và extract thông tin chi tiết"""
+    """Agent để parse Python và Java code thành AST và extract thông tin chi tiết"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         try:
+            # Initialize languages
             self.python_language = Language(tspython.language())
-            self.parser = Parser(self.python_language)
-            self.logger.info("ASTParsingAgent initialized successfully")
+            self.java_language = Language(tsjava.language())
+            
+            # Initialize parsers
+            self.python_parser = Parser(self.python_language)
+            self.java_parser = Parser(self.java_language)
+            
+            self.logger.info("ASTParsingAgent initialized successfully with Python and Java support")
         except Exception as e:
             self.logger.error(f"Failed to initialize ASTParsingAgent: {e}")
             raise
     
-    def parse_code(self, code: str, filename: str = "<string>") -> Dict[str, Any]:
+    def parse_code(self, code: str, filename: str = "<string>", language: str = "python") -> Dict[str, Any]:
         """
-        Parse Python code string và extract thông tin chi tiết
+        Parse code string và extract thông tin chi tiết
         
         Args:
-            code: Python source code
+            code: Source code (Python hoặc Java)
             filename: Tên file (để tracking)
+            language: Programming language ("python" hoặc "java")
             
         Returns:
             Dict chứa parsed information:
             {
                 'filename': str,
+                'language': str,
                 'functions': List[Dict],
                 'classes': List[Dict], 
                 'imports': List[Dict],
                 'variables': List[Dict],
-                'decorators': List[Dict],
+                'decorators': List[Dict],  # Python only
                 'errors': List[str],
                 'stats': Dict[str, int]
             }
         """
         result = {
             'filename': filename,
+            'language': language.lower(),
             'functions': [],
             'classes': [],
             'imports': [],
@@ -62,30 +72,16 @@ class ASTParsingAgent:
             if not code:
                 return result
             
-            # Parse code
-            tree = self.parser.parse(bytes(code, 'utf8'))
-            
-            if tree.root_node.has_error:
-                result['errors'].append("Syntax errors detected in code")
-                self.logger.warning(f"Syntax errors in {filename}")
-            
-            # Extract information
-            result['functions'] = self._extract_functions(tree.root_node, code)
-            result['classes'] = self._extract_classes(tree.root_node, code)
-            result['imports'] = self._extract_imports(tree.root_node, code)
-            result['variables'] = self._extract_variables(tree.root_node, code)
-            result['decorators'] = self._extract_decorators(tree.root_node, code)
-            
-            # Update stats
-            result['stats'].update({
-                'total_functions': len(result['functions']),
-                'total_classes': len(result['classes']),
-                'total_imports': len(result['imports']),
-                'total_variables': len(result['variables'])
-            })
-            
-            self.logger.debug(f"Parsed {filename}: {result['stats']}")
-            
+            # Parse based on language
+            if language.lower() == "python":
+                return self._parse_python_code(code, filename, result)
+            elif language.lower() == "java":
+                return self._parse_java_code(code, filename, result)
+            else:
+                result['errors'].append(f"Unsupported language: {language}")
+                self.logger.error(f"Unsupported language: {language}")
+                return result
+                
         except Exception as e:
             error_msg = f"Parse error in {filename}: {e}"
             result['errors'].append(error_msg)
@@ -93,13 +89,69 @@ class ASTParsingAgent:
         
         return result
     
-    def _extract_functions(self, root_node: Node, code: str) -> List[Dict]:
-        """Extract functions với thông tin chi tiết"""
+    def _parse_python_code(self, code: str, filename: str, result: Dict) -> Dict:
+        """Parse Python code"""
+        # Parse code
+        tree = self.python_parser.parse(bytes(code, 'utf8'))
+        
+        if tree.root_node.has_error:
+            result['errors'].append("Syntax errors detected in code")
+            self.logger.warning(f"Syntax errors in {filename}")
+        
+        # Extract information
+        result['functions'] = self._extract_python_functions(tree.root_node, code)
+        result['classes'] = self._extract_python_classes(tree.root_node, code)
+        result['imports'] = self._extract_python_imports(tree.root_node, code)
+        result['variables'] = self._extract_python_variables(tree.root_node, code)
+        result['decorators'] = self._extract_python_decorators(tree.root_node, code)
+        
+        # Update stats
+        result['stats'].update({
+            'total_functions': len(result['functions']),
+            'total_classes': len(result['classes']),
+            'total_imports': len(result['imports']),
+            'total_variables': len(result['variables'])
+        })
+        
+        self.logger.debug(f"Parsed Python {filename}: {result['stats']}")
+        return result
+    
+    def _parse_java_code(self, code: str, filename: str, result: Dict) -> Dict:
+        """Parse Java code"""
+        # Parse code
+        tree = self.java_parser.parse(bytes(code, 'utf8'))
+        
+        if tree.root_node.has_error:
+            result['errors'].append("Syntax errors detected in code")
+            self.logger.warning(f"Syntax errors in {filename}")
+        
+        # Extract information
+        result['functions'] = self._extract_java_methods(tree.root_node, code)
+        result['classes'] = self._extract_java_classes(tree.root_node, code)
+        result['imports'] = self._extract_java_imports(tree.root_node, code)
+        result['variables'] = self._extract_java_fields(tree.root_node, code)
+        # Java doesn't have decorators like Python
+        result['decorators'] = []
+        
+        # Update stats
+        result['stats'].update({
+            'total_functions': len(result['functions']),
+            'total_classes': len(result['classes']),
+            'total_imports': len(result['imports']),
+            'total_variables': len(result['variables'])
+        })
+        
+        self.logger.debug(f"Parsed Java {filename}: {result['stats']}")
+        return result
+
+    # Python parsing methods (renamed for clarity)
+    def _extract_python_functions(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Python functions với thông tin chi tiết"""
         functions = []
         
         def traverse(node: Node, class_name: Optional[str] = None):
             if node.type == 'function_definition':
-                func_info = self._parse_function_definition(node, code, class_name)
+                func_info = self._parse_python_function_definition(node, code, class_name)
                 if func_info:
                     functions.append(func_info)
             
@@ -107,19 +159,19 @@ class ASTParsingAgent:
             for child in node.children:
                 current_class = class_name
                 if child.type == 'class_definition':
-                    current_class = self._get_class_name(child, code)
+                    current_class = self._get_python_class_name(child, code)
                 traverse(child, current_class)
         
         traverse(root_node)
         return functions
     
-    def _extract_classes(self, root_node: Node, code: str) -> List[Dict]:
-        """Extract classes với thông tin chi tiết"""
+    def _extract_python_classes(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Python classes với thông tin chi tiết"""
         classes = []
         
         def traverse(node: Node):
             if node.type == 'class_definition':
-                class_info = self._parse_class_definition(node, code)
+                class_info = self._parse_python_class_definition(node, code)
                 if class_info:
                     classes.append(class_info)
             
@@ -129,13 +181,13 @@ class ASTParsingAgent:
         traverse(root_node)
         return classes
     
-    def _extract_imports(self, root_node: Node, code: str) -> List[Dict]:
-        """Extract imports với thông tin chi tiết"""
+    def _extract_python_imports(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Python imports với thông tin chi tiết"""
         imports = []
         
         def traverse(node: Node):
             if node.type in ['import_statement', 'import_from_statement']:
-                import_info = self._parse_import_statement(node, code)
+                import_info = self._parse_python_import_statement(node, code)
                 if import_info:
                     imports.append(import_info)
             
@@ -145,14 +197,14 @@ class ASTParsingAgent:
         traverse(root_node)
         return imports
     
-    def _extract_variables(self, root_node: Node, code: str) -> List[Dict]:
-        """Extract global variables"""
+    def _extract_python_variables(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Python global variables"""
         variables = []
         
         def traverse(node: Node, depth: int = 0):
             # Only get top-level assignments (global variables)
             if depth == 0 and node.type == 'assignment':
-                var_info = self._parse_assignment(node, code)
+                var_info = self._parse_python_assignment(node, code)
                 if var_info:
                     variables.append(var_info)
             
@@ -163,13 +215,13 @@ class ASTParsingAgent:
         traverse(root_node)
         return variables
     
-    def _extract_decorators(self, root_node: Node, code: str) -> List[Dict]:
-        """Extract decorators"""
+    def _extract_python_decorators(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Python decorators"""
         decorators = []
         
         def traverse(node: Node):
             if node.type == 'decorator':
-                decorator_info = self._parse_decorator(node, code)
+                decorator_info = self._parse_python_decorator(node, code)
                 if decorator_info:
                     decorators.append(decorator_info)
             
@@ -178,25 +230,124 @@ class ASTParsingAgent:
         
         traverse(root_node)
         return decorators
+
+    # Java parsing methods
+    def _extract_java_classes(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Java classes và interfaces"""
+        classes = []
+        
+        def traverse(node: Node):
+            if node.type in ['class_declaration', 'interface_declaration', 'enum_declaration']:
+                class_info = self._parse_java_class_declaration(node, code)
+                if class_info:
+                    classes.append(class_info)
+            
+            for child in node.children:
+                traverse(child)
+        
+        traverse(root_node)
+        return classes
     
-    def _parse_function_definition(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
-        """Parse function definition với chi tiết"""
+    def _extract_java_methods(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Java methods"""
+        methods = []
+        
+        def traverse(node: Node, class_name: Optional[str] = None):
+            if node.type == 'method_declaration':
+                method_info = self._parse_java_method_declaration(node, code, class_name)
+                if method_info:
+                    methods.append(method_info)
+            elif node.type == 'constructor_declaration':
+                constructor_info = self._parse_java_constructor_declaration(node, code, class_name)
+                if constructor_info:
+                    methods.append(constructor_info)
+            
+            # Recursively traverse children
+            for child in node.children:
+                current_class = class_name
+                if child.type in ['class_declaration', 'interface_declaration']:
+                    current_class = self._get_java_class_name(child, code)
+                traverse(child, current_class)
+        
+        traverse(root_node)
+        return methods
+    
+    def _extract_java_imports(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Java imports"""
+        imports = []
+        
+        def traverse(node: Node):
+            if node.type == 'import_declaration':
+                import_info = self._parse_java_import_declaration(node, code)
+                if import_info:
+                    imports.append(import_info)
+            
+            for child in node.children:
+                traverse(child)
+        
+        traverse(root_node)
+        return imports
+    
+    def _extract_java_fields(self, root_node: Node, code: str) -> List[Dict]:
+        """Extract Java fields (class variables)"""
+        fields = []
+        
+        def traverse(node: Node, class_name: Optional[str] = None):
+            if node.type == 'field_declaration':
+                field_info = self._parse_java_field_declaration(node, code, class_name)
+                if field_info:
+                    fields.append(field_info)
+            
+            # Recursively traverse children
+            for child in node.children:
+                current_class = class_name
+                if child.type in ['class_declaration', 'interface_declaration']:
+                    current_class = self._get_java_class_name(child, code)
+                traverse(child, current_class)
+        
+        traverse(root_node)
+        return fields
+
+    # Legacy methods for backward compatibility (renamed to Python-specific)
+    def _extract_functions(self, root_node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python functions"""
+        return self._extract_python_functions(root_node, code)
+    
+    def _extract_classes(self, root_node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python classes"""
+        return self._extract_python_classes(root_node, code)
+    
+    def _extract_imports(self, root_node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python imports"""
+        return self._extract_python_imports(root_node, code)
+    
+    def _extract_variables(self, root_node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python variables"""
+        return self._extract_python_variables(root_node, code)
+    
+    def _extract_decorators(self, root_node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python decorators"""
+        return self._extract_python_decorators(root_node, code)
+
+    # Python parsing implementation methods
+    def _parse_python_function_definition(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
+        """Parse Python function definition với chi tiết"""
         try:
-            name = self._get_function_name(node, code)
+            name = self._get_python_function_name(node, code)
             if not name:
                 return None
             
             # Get parameters
-            parameters = self._get_function_parameters(node, code)
+            parameters = self._get_python_function_parameters(node, code)
             
             # Get docstring
-            docstring = self._get_function_docstring(node, code)
+            docstring = self._get_python_function_docstring(node, code)
             
             # Get decorators
-            decorators = self._get_function_decorators(node, code)
+            decorators = self._get_python_function_decorators(node, code)
             
             # Get return type annotation if exists
-            return_type = self._get_return_type_annotation(node, code)
+            return_type = self._get_python_return_type_annotation(node, code)
             
             return {
                 'name': name,
@@ -212,24 +363,24 @@ class ASTParsingAgent:
                 'is_dunder': name.startswith('__') and name.endswith('__')
             }
         except Exception as e:
-            self.logger.warning(f"Error parsing function: {e}")
+            self.logger.warning(f"Error parsing Python function: {e}")
             return None
     
-    def _parse_class_definition(self, node: Node, code: str) -> Optional[Dict]:
-        """Parse class definition với chi tiết"""
+    def _parse_python_class_definition(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Python class definition với chi tiết"""
         try:
-            name = self._get_class_name(node, code)
+            name = self._get_python_class_name(node, code)
             if not name:
                 return None
             
             # Get base classes
-            base_classes = self._get_base_classes(node, code)
+            base_classes = self._get_python_base_classes(node, code)
             
             # Get docstring
-            docstring = self._get_class_docstring(node, code)
+            docstring = self._get_python_class_docstring(node, code)
             
             # Get decorators
-            decorators = self._get_class_decorators(node, code)
+            decorators = self._get_python_class_decorators(node, code)
             
             # Get methods
             methods = []
@@ -237,7 +388,7 @@ class ASTParsingAgent:
                 if child.type == 'block':
                     for grandchild in child.children:
                         if grandchild.type == 'function_definition':
-                            method_info = self._parse_function_definition(grandchild, code, name)
+                            method_info = self._parse_python_function_definition(grandchild, code, name)
                             if method_info:
                                 methods.append(method_info)
             
@@ -253,11 +404,11 @@ class ASTParsingAgent:
                 'method_count': len(methods)
             }
         except Exception as e:
-            self.logger.warning(f"Error parsing class: {e}")
+            self.logger.warning(f"Error parsing Python class: {e}")
             return None
     
-    def _parse_import_statement(self, node: Node, code: str) -> Optional[Dict]:
-        """Parse import statement với chi tiết"""
+    def _parse_python_import_statement(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Python import statement với chi tiết"""
         try:
             import_text = self._get_node_text(node, code).strip()
             
@@ -266,7 +417,7 @@ class ASTParsingAgent:
                 modules = []
                 for child in node.children:
                     if child.type == 'dotted_as_names' or child.type == 'dotted_name':
-                        modules.extend(self._extract_module_names(child, code))
+                        modules.extend(self._extract_python_module_names(child, code))
                 
                 return {
                     'type': 'import',
@@ -298,7 +449,7 @@ class ASTParsingAgent:
                         # Individual import names after 'import' keyword
                         names.append(self._get_node_text(child, code))
                     elif child.type in ['import_list', 'wildcard_import']:
-                        names.extend(self._extract_import_names(child, code))
+                        names.extend(self._extract_python_import_names(child, code))
                 
                 return {
                     'type': 'from_import',
@@ -308,11 +459,11 @@ class ASTParsingAgent:
                     'line': node.start_point[0] + 1
                 }
         except Exception as e:
-            self.logger.warning(f"Error parsing import: {e}")
+            self.logger.warning(f"Error parsing Python import: {e}")
             return None
     
-    def _parse_assignment(self, node: Node, code: str) -> Optional[Dict]:
-        """Parse assignment statement"""
+    def _parse_python_assignment(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Python assignment statement"""
         try:
             assignment_text = self._get_node_text(node, code).strip()
             
@@ -333,11 +484,11 @@ class ASTParsingAgent:
                         'text': assignment_text
                     }
         except Exception as e:
-            self.logger.warning(f"Error parsing assignment: {e}")
+            self.logger.warning(f"Error parsing Python assignment: {e}")
             return None
     
-    def _parse_decorator(self, node: Node, code: str) -> Optional[Dict]:
-        """Parse decorator"""
+    def _parse_python_decorator(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Python decorator"""
         try:
             decorator_text = self._get_node_text(node, code).strip()
             
@@ -357,16 +508,213 @@ class ASTParsingAgent:
                 'line': node.start_point[0] + 1
             }
         except Exception as e:
-            self.logger.warning(f"Error parsing decorator: {e}")
+            self.logger.warning(f"Error parsing Python decorator: {e}")
+            return None
+
+    # Java parsing implementation methods
+    def _parse_java_class_declaration(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Java class/interface declaration"""
+        try:
+            name = self._get_java_class_name(node, code)
+            if not name:
+                return None
+            
+            # Get modifiers
+            modifiers = self._get_java_modifiers(node, code)
+            
+            # Determine type
+            class_type = node.type  # class_declaration, interface_declaration, enum_declaration
+            
+            # Get superclass and interfaces
+            superclass = None
+            interfaces = []
+            
+            for child in node.children:
+                if child.type == 'superclass':
+                    superclass = self._get_node_text(child, code).replace('extends', '').strip()
+                elif child.type == 'super_interfaces':
+                    interfaces = self._get_java_interface_names(child, code)
+            
+            # Get methods and fields
+            methods = []
+            fields = []
+            
+            for child in node.children:
+                if child.type == 'class_body':
+                    for body_child in child.children:
+                        if body_child.type == 'method_declaration':
+                            method_info = self._parse_java_method_declaration(body_child, code, name)
+                            if method_info:
+                                methods.append(method_info)
+                        elif body_child.type == 'constructor_declaration':
+                            constructor_info = self._parse_java_constructor_declaration(body_child, code, name)
+                            if constructor_info:
+                                methods.append(constructor_info)
+                        elif body_child.type == 'field_declaration':
+                            field_info = self._parse_java_field_declaration(body_child, code, name)
+                            if field_info:
+                                fields.append(field_info)
+            
+            return {
+                'name': name,
+                'type': class_type,
+                'modifiers': modifiers,
+                'superclass': superclass,
+                'interfaces': interfaces,
+                'methods': methods,
+                'fields': fields,
+                'start_line': node.start_point[0] + 1,
+                'end_line': node.end_point[0] + 1,
+                'is_interface': class_type == 'interface_declaration',
+                'is_enum': class_type == 'enum_declaration',
+                'is_abstract': 'abstract' in modifiers,
+                'is_public': 'public' in modifiers,
+                'method_count': len(methods),
+                'field_count': len(fields)
+            }
+        except Exception as e:
+            self.logger.warning(f"Error parsing Java class: {e}")
             return None
     
-    # Helper methods
+    def _parse_java_method_declaration(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
+        """Parse Java method declaration"""
+        try:
+            name = self._get_java_method_name(node, code)
+            if not name:
+                return None
+            
+            # Get modifiers
+            modifiers = self._get_java_modifiers(node, code)
+            
+            # Get return type
+            return_type = self._get_java_method_return_type(node, code)
+            
+            # Get parameters
+            parameters = self._get_java_method_parameters(node, code)
+            
+            return {
+                'name': name,
+                'class_name': class_name,
+                'modifiers': modifiers,
+                'return_type': return_type,
+                'parameters': parameters,
+                'start_line': node.start_point[0] + 1,
+                'end_line': node.end_point[0] + 1,
+                'is_method': True,
+                'is_constructor': False,
+                'is_static': 'static' in modifiers,
+                'is_abstract': 'abstract' in modifiers,
+                'is_public': 'public' in modifiers,
+                'is_private': 'private' in modifiers,
+                'is_protected': 'protected' in modifiers
+            }
+        except Exception as e:
+            self.logger.warning(f"Error parsing Java method: {e}")
+            return None
+    
+    def _parse_java_constructor_declaration(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
+        """Parse Java constructor declaration"""
+        try:
+            name = self._get_java_constructor_name(node, code)
+            if not name:
+                name = class_name or "Constructor"
+            
+            # Get modifiers
+            modifiers = self._get_java_modifiers(node, code)
+            
+            # Get parameters
+            parameters = self._get_java_method_parameters(node, code)
+            
+            return {
+                'name': name,
+                'class_name': class_name,
+                'modifiers': modifiers,
+                'return_type': 'void',  # Constructors don't have return types
+                'parameters': parameters,
+                'start_line': node.start_point[0] + 1,
+                'end_line': node.end_point[0] + 1,
+                'is_method': True,
+                'is_constructor': True,
+                'is_static': False,  # Constructors can't be static
+                'is_abstract': False,  # Constructors can't be abstract
+                'is_public': 'public' in modifiers,
+                'is_private': 'private' in modifiers,
+                'is_protected': 'protected' in modifiers
+            }
+        except Exception as e:
+            self.logger.warning(f"Error parsing Java constructor: {e}")
+            return None
+    
+    def _parse_java_field_declaration(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
+        """Parse Java field declaration"""
+        try:
+            # Get modifiers
+            modifiers = self._get_java_modifiers(node, code)
+            
+            # Get type and variable names
+            field_type = None
+            variable_names = []
+            
+            for child in node.children:
+                if child.type in ['integral_type', 'floating_point_type', 'boolean_type', 'type_identifier', 'generic_type']:
+                    field_type = self._get_node_text(child, code)
+                elif child.type == 'variable_declarator':
+                    var_name = self._get_java_variable_name(child, code)
+                    if var_name:
+                        variable_names.append(var_name)
+            
+            # Return info for each variable (Java allows multiple variables in one declaration)
+            if variable_names:
+                return {
+                    'names': variable_names,
+                    'type': field_type,
+                    'class_name': class_name,
+                    'modifiers': modifiers,
+                    'start_line': node.start_point[0] + 1,
+                    'is_static': 'static' in modifiers,
+                    'is_final': 'final' in modifiers,
+                    'is_public': 'public' in modifiers,
+                    'is_private': 'private' in modifiers,
+                    'is_protected': 'protected' in modifiers
+                }
+        except Exception as e:
+            self.logger.warning(f"Error parsing Java field: {e}")
+            return None
+    
+    def _parse_java_import_declaration(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Java import declaration"""
+        try:
+            import_text = self._get_node_text(node, code).strip()
+            
+            # Extract the imported package/class
+            imported = None
+            is_static = False
+            
+            for child in node.children:
+                if child.type == 'static':
+                    is_static = True
+                elif child.type in ['scoped_identifier', 'identifier']:
+                    imported = self._get_node_text(child, code)
+            
+            return {
+                'type': 'static_import' if is_static else 'import',
+                'imported': imported,
+                'text': import_text,
+                'line': node.start_point[0] + 1,
+                'is_static': is_static
+            }
+        except Exception as e:
+            self.logger.warning(f"Error parsing Java import: {e}")
+            return None
+
+    # Helper methods - Common
     def _get_node_text(self, node: Node, code: str) -> str:
         """Get text content của node"""
         return code[node.start_byte:node.end_byte]
-    
-    def _get_function_name(self, node: Node, code: str) -> Optional[str]:
-        """Get function name"""
+
+    # Python helper methods
+    def _get_python_function_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Python function name"""
         # For function_definition, the second child should be the identifier (after 'def')
         if len(node.children) >= 2 and node.children[1].type == 'identifier':
             return self._get_node_text(node.children[1], code)
@@ -381,8 +729,8 @@ class ASTParsingAgent:
         
         return None
     
-    def _get_class_name(self, node: Node, code: str) -> Optional[str]:
-        """Get class name"""
+    def _get_python_class_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Python class name"""
         # For class_definition, the second child should be the identifier (after 'class')
         if len(node.children) >= 2 and node.children[1].type == 'identifier':
             name = self._get_node_text(node.children[1], code)
@@ -400,8 +748,8 @@ class ASTParsingAgent:
         
         return None
     
-    def _get_function_parameters(self, node: Node, code: str) -> List[Dict]:
-        """Get function parameters"""
+    def _get_python_function_parameters(self, node: Node, code: str) -> List[Dict]:
+        """Get Python function parameters"""
         parameters = []
         
         for child in node.children:
@@ -468,8 +816,8 @@ class ASTParsingAgent:
         
         return parameters
     
-    def _get_function_docstring(self, node: Node, code: str) -> Optional[str]:
-        """Get function docstring"""
+    def _get_python_function_docstring(self, node: Node, code: str) -> Optional[str]:
+        """Get Python function docstring"""
         # Look for first string literal in function body
         for child in node.children:
             if child.type == 'block':
@@ -504,12 +852,12 @@ class ASTParsingAgent:
                 break
         return None
     
-    def _get_class_docstring(self, node: Node, code: str) -> Optional[str]:
-        """Get class docstring"""
-        return self._get_function_docstring(node, code)  # Same logic
+    def _get_python_class_docstring(self, node: Node, code: str) -> Optional[str]:
+        """Get Python class docstring"""
+        return self._get_python_function_docstring(node, code)  # Same logic
     
-    def _get_function_decorators(self, node: Node, code: str) -> List[str]:
-        """Get function decorators"""
+    def _get_python_function_decorators(self, node: Node, code: str) -> List[str]:
+        """Get Python function decorators"""
         decorators = []
         
         # Look for decorators before function definition
@@ -523,19 +871,19 @@ class ASTParsingAgent:
         
         return decorators
     
-    def _get_class_decorators(self, node: Node, code: str) -> List[str]:
-        """Get class decorators"""
-        return self._get_function_decorators(node, code)  # Same logic
+    def _get_python_class_decorators(self, node: Node, code: str) -> List[str]:
+        """Get Python class decorators"""
+        return self._get_python_function_decorators(node, code)  # Same logic
     
-    def _get_return_type_annotation(self, node: Node, code: str) -> Optional[str]:
-        """Get return type annotation"""
+    def _get_python_return_type_annotation(self, node: Node, code: str) -> Optional[str]:
+        """Get Python return type annotation"""
         for child in node.children:
             if child.type == 'type':
                 return self._get_node_text(child, code)
         return None
     
-    def _get_base_classes(self, node: Node, code: str) -> List[str]:
-        """Get base classes"""
+    def _get_python_base_classes(self, node: Node, code: str) -> List[str]:
+        """Get Python base classes"""
         base_classes = []
         
         for child in node.children:
@@ -546,8 +894,8 @@ class ASTParsingAgent:
         
         return base_classes
     
-    def _extract_module_names(self, node: Node, code: str) -> List[str]:
-        """Extract module names từ import statement"""
+    def _extract_python_module_names(self, node: Node, code: str) -> List[str]:
+        """Extract Python module names từ import statement"""
         modules = []
         
         if node.type == 'dotted_name':
@@ -559,8 +907,8 @@ class ASTParsingAgent:
         
         return modules
     
-    def _extract_import_names(self, node: Node, code: str) -> List[str]:
-        """Extract import names từ from import statement"""
+    def _extract_python_import_names(self, node: Node, code: str) -> List[str]:
+        """Extract Python import names từ from import statement"""
         names = []
         
         if node.type == 'wildcard_import':
@@ -571,6 +919,168 @@ class ASTParsingAgent:
                     names.append(self._get_node_text(child, code))
         
         return names
+
+    # Java helper methods
+    def _get_java_class_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Java class name"""
+        for child in node.children:
+            if child.type == 'identifier':
+                return self._get_node_text(child, code)
+        return None
+    
+    def _get_java_method_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Java method name"""
+        for child in node.children:
+            if child.type == 'identifier':
+                return self._get_node_text(child, code)
+        return None
+    
+    def _get_java_constructor_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Java constructor name"""
+        for child in node.children:
+            if child.type == 'identifier':
+                return self._get_node_text(child, code)
+        return None
+    
+    def _get_java_modifiers(self, node: Node, code: str) -> List[str]:
+        """Get Java modifiers (public, private, static, etc.)"""
+        modifiers = []
+        
+        for child in node.children:
+            if child.type == 'modifiers':
+                for modifier_child in child.children:
+                    if modifier_child.type in ['public', 'private', 'protected', 'static', 'final', 'abstract', 'synchronized', 'native', 'strictfp']:
+                        modifiers.append(modifier_child.type)
+        
+        return modifiers
+    
+    def _get_java_method_return_type(self, node: Node, code: str) -> Optional[str]:
+        """Get Java method return type"""
+        for child in node.children:
+            if child.type in ['void_type', 'integral_type', 'floating_point_type', 'boolean_type', 'type_identifier', 'generic_type', 'array_type']:
+                return self._get_node_text(child, code)
+        return None
+    
+    def _get_java_method_parameters(self, node: Node, code: str) -> List[Dict]:
+        """Get Java method parameters"""
+        parameters = []
+        
+        for child in node.children:
+            if child.type == 'formal_parameters':
+                for param_child in child.children:
+                    if param_child.type == 'formal_parameter':
+                        param_info = self._parse_java_formal_parameter(param_child, code)
+                        if param_info:
+                            parameters.append(param_info)
+        
+        return parameters
+    
+    def _parse_java_formal_parameter(self, node: Node, code: str) -> Optional[Dict]:
+        """Parse Java formal parameter"""
+        param_type = None
+        param_name = None
+        
+        for child in node.children:
+            if child.type in ['integral_type', 'floating_point_type', 'boolean_type', 'type_identifier', 'generic_type', 'array_type']:
+                param_type = self._get_node_text(child, code)
+            elif child.type == 'variable_declarator':
+                param_name = self._get_java_variable_name(child, code)
+            elif child.type == 'identifier':
+                param_name = self._get_node_text(child, code)
+        
+        if param_name:
+            return {
+                'name': param_name,
+                'type': param_type,
+                'default': None  # Java doesn't have default parameters like Python
+            }
+        
+        return None
+    
+    def _get_java_variable_name(self, node: Node, code: str) -> Optional[str]:
+        """Get Java variable name from variable_declarator"""
+        for child in node.children:
+            if child.type == 'identifier':
+                return self._get_node_text(child, code)
+        return None
+    
+    def _get_java_interface_names(self, node: Node, code: str) -> List[str]:
+        """Get Java interface names from super_interfaces"""
+        interfaces = []
+        
+        for child in node.children:
+            if child.type == 'type_list':
+                for type_child in child.children:
+                    if type_child.type == 'type_identifier':
+                        interfaces.append(self._get_node_text(type_child, code))
+        
+        return interfaces
+
+    # Legacy helper methods for backward compatibility
+    def _get_function_name(self, node: Node, code: str) -> Optional[str]:
+        """Legacy method - delegates to Python function name"""
+        return self._get_python_function_name(node, code)
+    
+    def _get_class_name(self, node: Node, code: str) -> Optional[str]:
+        """Legacy method - delegates to Python class name"""
+        return self._get_python_class_name(node, code)
+    
+    def _get_function_parameters(self, node: Node, code: str) -> List[Dict]:
+        """Legacy method - delegates to Python function parameters"""
+        return self._get_python_function_parameters(node, code)
+    
+    def _get_function_docstring(self, node: Node, code: str) -> Optional[str]:
+        """Legacy method - delegates to Python function docstring"""
+        return self._get_python_function_docstring(node, code)
+    
+    def _get_class_docstring(self, node: Node, code: str) -> Optional[str]:
+        """Legacy method - delegates to Python class docstring"""
+        return self._get_python_class_docstring(node, code)
+    
+    def _get_function_decorators(self, node: Node, code: str) -> List[str]:
+        """Legacy method - delegates to Python function decorators"""
+        return self._get_python_function_decorators(node, code)
+    
+    def _get_class_decorators(self, node: Node, code: str) -> List[str]:
+        """Legacy method - delegates to Python class decorators"""
+        return self._get_python_class_decorators(node, code)
+    
+    def _get_return_type_annotation(self, node: Node, code: str) -> Optional[str]:
+        """Legacy method - delegates to Python return type annotation"""
+        return self._get_python_return_type_annotation(node, code)
+    
+    def _get_base_classes(self, node: Node, code: str) -> List[str]:
+        """Legacy method - delegates to Python base classes"""
+        return self._get_python_base_classes(node, code)
+    
+    def _extract_module_names(self, node: Node, code: str) -> List[str]:
+        """Legacy method - delegates to Python module names"""
+        return self._extract_python_module_names(node, code)
+    
+    def _extract_import_names(self, node: Node, code: str) -> List[str]:
+        """Legacy method - delegates to Python import names"""
+        return self._extract_python_import_names(node, code)
+
+    # Legacy parsing methods for backward compatibility
+    def _parse_function_definition(self, node: Node, code: str, class_name: Optional[str] = None) -> Optional[Dict]:
+        """Legacy method - delegates to Python function definition"""
+        return self._parse_python_function_definition(node, code, class_name)
+    
+    def _parse_class_definition(self, node: Node, code: str) -> Optional[Dict]:
+        """Legacy method - delegates to Python class definition"""
+        return self._parse_python_class_definition(node, code)
+    
+    def _parse_import_statement(self, node: Node, code: str) -> Optional[Dict]:
+        """Legacy method - delegates to Python import statement"""
+        return self._parse_python_import_statement(node, code)
+    
+    def _parse_assignment(self, node: Node, code: str) -> Optional[Dict]:
+        """Legacy method - delegates to Python assignment"""
+        return self._parse_python_assignment(node, code)
+    
+    def _parse_decorator(self, node: Node, code: str) -> Optional[Dict]:
+        """Legacy method - delegates to Python decorator"""
+        return self._parse_python_decorator(node, code)
 
 
 def analyze_repository_code(code_fetcher_agent, repo_url: str) -> Dict[str, Any]:

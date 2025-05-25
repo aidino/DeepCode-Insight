@@ -1,5 +1,5 @@
 """
-LLMOrchestratorAgent - Orchestrate LLM calls để phân tích findings từ StaticAnalysisAgent
+LLMOrchestratorAgent - Orchestrate LLM calls với RAG context và Chain-of-Thought prompting
 """
 
 import logging
@@ -11,51 +11,85 @@ import os
 # Add project root to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from ..utils.llm_caller import OllamaLLMCaller, OllamaModel, OllamaResponse, OllamaAPIError, create_llm_caller
+try:
+    from ..utils.llm_interface import (
+        BaseLLMProvider, LLMProviderFactory, LLMProvider, LLMResponse,
+        create_llm_provider
+    )
+    from ..utils.llm_caller import OllamaModel
+    from .rag_context import RAGContextAgent
+except ImportError:
+    from utils.llm_interface import (
+        BaseLLMProvider, LLMProviderFactory, LLMProvider, LLMResponse,
+        create_llm_provider
+    )
+    from utils.llm_caller import OllamaModel
+    from rag_context import RAGContextAgent
 
 
 class LLMOrchestratorAgent:
     """
-    Agent để orchestrate LLM calls cho code analysis.
-    Nhận findings từ StaticAnalysisAgent, format summary prompt và gọi llm_caller
+    Enhanced Agent để orchestrate LLM calls với RAG context và Chain-of-Thought prompting.
+    Hỗ trợ multiple LLM providers (Ollama, OpenAI, Gemini) và tích hợp với RAGContextAgent.
     """
     
     def __init__(self, 
-                 model: Union[str, OllamaModel] = OllamaModel.CODELLAMA,
-                 base_url: str = "http://localhost:11434",
-                 timeout: int = 120):
+                 provider: str = "ollama",
+                 model: str = "codellama",
+                 rag_context_agent: Optional[RAGContextAgent] = None,
+                 enable_rag: bool = True,
+                 enable_chain_of_thought: bool = True,
+                 **provider_kwargs):
         """
         Initialize LLMOrchestratorAgent
         
         Args:
-            model: LLM model để sử dụng
-            base_url: Ollama server URL
-            timeout: Request timeout
+            provider: LLM provider (ollama, openai, gemini)
+            model: Model name
+            rag_context_agent: RAGContextAgent instance (optional)
+            enable_rag: Enable RAG context retrieval
+            enable_chain_of_thought: Enable Chain-of-Thought prompting
+            **provider_kwargs: Additional provider-specific arguments
         """
         self.logger = logging.getLogger(__name__)
+        self.enable_rag = enable_rag
+        self.enable_chain_of_thought = enable_chain_of_thought
         
         try:
-            self.llm_caller = OllamaLLMCaller(
+            # Initialize LLM provider
+            self.llm_provider = create_llm_provider(
+                provider=provider,
                 model=model,
-                base_url=base_url,
-                timeout=timeout
+                **provider_kwargs
             )
-            self.logger.info(f"LLMOrchestratorAgent initialized with model: {self.llm_caller.model}")
+            
+            # Initialize RAG context agent if enabled
+            self.rag_agent = rag_context_agent
+            if self.enable_rag and not self.rag_agent:
+                try:
+                    self.rag_agent = RAGContextAgent()
+                    self.logger.info("RAGContextAgent initialized successfully")
+                except Exception as e:
+                    self.logger.warning(f"Failed to initialize RAGContextAgent: {e}. RAG disabled.")
+                    self.enable_rag = False
+            
+            self.logger.info(f"LLMOrchestratorAgent initialized with provider: {provider}, model: {model}")
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize LLMOrchestratorAgent: {e}")
             raise
     
     def process_findings(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        LangGraph node function để process findings từ StaticAnalysisAgent
+        Enhanced LangGraph node function với RAG context và Chain-of-Thought
         
         Args:
             state: LangGraph state chứa findings từ previous agents
             
         Returns:
-            Updated state với LLM analysis results
+            Updated state với enhanced LLM analysis results
         """
-        self.logger.info("LLMOrchestratorAgent processing findings...")
+        self.logger.info("LLMOrchestratorAgent processing findings with enhanced capabilities...")
         
         try:
             # Extract findings từ state
@@ -67,40 +101,103 @@ class LLMOrchestratorAgent:
                 self.logger.warning("No static analysis results found in state")
                 return self._update_state_with_error(state, "No static analysis results available")
             
-            # Generate LLM analysis
-            llm_analysis = self.analyze_findings_with_llm(
+            # Get RAG context if enabled
+            rag_context = None
+            if self.enable_rag and self.rag_agent and code_content:
+                rag_context = self._get_rag_context(code_content, filename, static_analysis_results)
+            
+            # Generate enhanced LLM analysis với RAG và Chain-of-Thought
+            llm_analysis = self.analyze_findings_with_enhanced_llm(
                 static_analysis_results, 
                 code_content, 
-                filename
+                filename,
+                rag_context
             )
             
-            # Update state với LLM results
+            # Update state với enhanced LLM results
             updated_state = state.copy()
             updated_state['llm_analysis'] = llm_analysis
             updated_state['current_agent'] = 'llm_orchestrator'
             updated_state['processing_status'] = 'llm_analysis_completed'
+            updated_state['rag_enabled'] = self.enable_rag
+            updated_state['chain_of_thought_enabled'] = self.enable_chain_of_thought
             
-            self.logger.info("LLM analysis completed successfully")
+            self.logger.info("Enhanced LLM analysis completed successfully")
             return updated_state
             
         except Exception as e:
             self.logger.error(f"Error in LLMOrchestratorAgent: {e}")
             return self._update_state_with_error(state, str(e))
     
-    def analyze_findings_with_llm(self, 
-                                  static_results: Dict[str, Any], 
-                                  code_content: str = "",
-                                  filename: str = "<unknown>") -> Dict[str, Any]:
+    def _get_rag_context(self, 
+                        code_content: str, 
+                        filename: str, 
+                        static_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Analyze static analysis findings sử dụng LLM
+        Get relevant context từ RAG system
+        
+        Args:
+            code_content: Source code
+            filename: File name
+            static_results: Static analysis results
+            
+        Returns:
+            RAG context dictionary hoặc None
+        """
+        try:
+            # Index current code if not already indexed
+            self.rag_agent.index_code_file(code_content, filename)
+            
+            # Create query based on static analysis findings
+            query_text = self._create_rag_query(static_results, filename)
+            
+            # Query RAG system
+            rag_results = self.rag_agent.query_with_context(
+                query_text=query_text,
+                top_k=5,
+                generate_response=False  # We'll generate our own response
+            )
+            
+            return {
+                'query': query_text,
+                'relevant_chunks': rag_results.get('chunks', []),
+                'context_summary': rag_results.get('summary', ''),
+                'metadata': rag_results.get('metadata', {})
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get RAG context: {e}")
+            return None
+    
+    def _create_rag_query(self, static_results: Dict[str, Any], filename: str) -> str:
+        """Create query cho RAG system dựa trên static analysis findings"""
+        issues = static_results.get('static_issues', {})
+        
+        # Extract key issues for query
+        query_parts = [f"code analysis for {filename}"]
+        
+        for issue_type, issue_list in issues.items():
+            if issue_list:
+                query_parts.append(f"{issue_type.replace('_', ' ')}")
+        
+        return " ".join(query_parts)
+    
+    def analyze_findings_with_enhanced_llm(self, 
+                                          static_results: Dict[str, Any], 
+                                          code_content: str = "",
+                                          filename: str = "<unknown>",
+                                          rag_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Enhanced analysis với RAG context và Chain-of-Thought prompting
         
         Args:
             static_results: Results từ StaticAnalysisAgent
-            code_content: Original code content (optional)
+            code_content: Original code content
             filename: Filename for context
+            rag_context: RAG context từ vector database
             
         Returns:
-            Dict chứa LLM analysis results
+            Dict chứa enhanced LLM analysis results
         """
         analysis_result = {
             'filename': filename,
@@ -110,95 +207,129 @@ class LLMOrchestratorAgent:
             'recommendations': [],
             'code_quality_assessment': '',
             'improvement_suggestions': [],
+            'solution_suggestions': [],  # New: Chain-of-Thought solutions
+            'rag_context_used': rag_context is not None,
             'llm_metadata': {
-                'model_used': self.llm_caller.model,
-                'analysis_type': 'comprehensive_code_review'
+                'provider': self.llm_provider.__class__.__name__,
+                'model_used': self.llm_provider.model,
+                'analysis_type': 'enhanced_code_review_with_rag_and_cot',
+                'rag_enabled': self.enable_rag,
+                'chain_of_thought_enabled': self.enable_chain_of_thought
             }
         }
         
         try:
-            # Format summary prompt
-            summary_prompt = self._format_summary_prompt(static_results, filename)
-            
-            # Get LLM summary
-            self.logger.debug("Generating LLM summary...")
-            summary_response = self.llm_caller.generate(
+            # 1. Generate summary với RAG context
+            summary_prompt = self._format_enhanced_summary_prompt(
+                static_results, filename, rag_context
+            )
+            summary_response = self._generate_with_provider(
                 summary_prompt,
-                temperature=0.3,  # Lower temperature for consistent analysis
-                max_tokens=500
+                temperature=0.3,
+                max_tokens=600
             )
             analysis_result['summary'] = summary_response.response
             
-            # Generate detailed analysis nếu có code content
+            # 2. Generate detailed analysis với Chain-of-Thought
             if code_content:
-                detailed_prompt = self._format_detailed_analysis_prompt(
-                    static_results, code_content, filename
+                detailed_prompt = self._format_chain_of_thought_analysis_prompt(
+                    static_results, code_content, filename, rag_context
                 )
-                
-                self.logger.debug("Generating detailed LLM analysis...")
-                detailed_response = self.llm_caller.generate(
+                detailed_response = self._generate_with_provider(
                     detailed_prompt,
-                    code_snippet=code_content,
                     temperature=0.3,
-                    max_tokens=800
+                    max_tokens=1000
                 )
                 analysis_result['detailed_analysis'] = detailed_response.response
             
-            # Generate priority issues
-            priority_prompt = self._format_priority_issues_prompt(static_results)
-            priority_response = self.llm_caller.generate(
+            # 3. Generate priority issues với enhanced context
+            priority_prompt = self._format_enhanced_priority_issues_prompt(
+                static_results, rag_context
+            )
+            priority_response = self._generate_with_provider(
                 priority_prompt,
                 temperature=0.2,
-                max_tokens=400
+                max_tokens=500
             )
             analysis_result['priority_issues'] = self._parse_priority_issues(
                 priority_response.response
             )
             
-            # Generate recommendations
-            recommendations_prompt = self._format_recommendations_prompt(static_results)
-            recommendations_response = self.llm_caller.generate(
+            # 4. Generate solution suggestions với Chain-of-Thought
+            if self.enable_chain_of_thought:
+                solution_prompt = self._format_chain_of_thought_solution_prompt(
+                    static_results, code_content, rag_context
+                )
+                solution_response = self._generate_with_provider(
+                    solution_prompt,
+                    temperature=0.4,
+                    max_tokens=800
+                )
+                analysis_result['solution_suggestions'] = self._parse_solution_suggestions(
+                    solution_response.response
+                )
+            
+            # 5. Generate recommendations với RAG context
+            recommendations_prompt = self._format_enhanced_recommendations_prompt(
+                static_results, rag_context
+            )
+            recommendations_response = self._generate_with_provider(
                 recommendations_prompt,
                 temperature=0.4,
-                max_tokens=600
+                max_tokens=700
             )
             analysis_result['recommendations'] = self._parse_recommendations(
                 recommendations_response.response
             )
             
-            # Generate code quality assessment
-            quality_prompt = self._format_quality_assessment_prompt(static_results)
-            quality_response = self.llm_caller.generate(
+            # 6. Generate quality assessment
+            quality_prompt = self._format_enhanced_quality_assessment_prompt(
+                static_results, rag_context
+            )
+            quality_response = self._generate_with_provider(
                 quality_prompt,
                 temperature=0.3,
-                max_tokens=300
+                max_tokens=400
             )
             analysis_result['code_quality_assessment'] = quality_response.response
             
-            # Generate improvement suggestions
-            improvement_prompt = self._format_improvement_suggestions_prompt(static_results)
-            improvement_response = self.llm_caller.generate(
+            # 7. Generate improvement suggestions
+            improvement_prompt = self._format_enhanced_improvement_suggestions_prompt(
+                static_results, rag_context
+            )
+            improvement_response = self._generate_with_provider(
                 improvement_prompt,
                 temperature=0.5,
-                max_tokens=500
+                max_tokens=600
             )
             analysis_result['improvement_suggestions'] = self._parse_improvement_suggestions(
                 improvement_response.response
             )
             
-            self.logger.info("LLM analysis completed successfully")
+            self.logger.info("Enhanced LLM analysis completed successfully")
             
-        except OllamaAPIError as e:
-            self.logger.error(f"LLM API error: {e}")
-            analysis_result['error'] = f"LLM API error: {e.message}"
         except Exception as e:
-            self.logger.error(f"Error in LLM analysis: {e}")
-            analysis_result['error'] = f"Analysis error: {str(e)}"
+            self.logger.error(f"Error in enhanced LLM analysis: {e}")
+            analysis_result['error'] = f"Enhanced analysis error: {str(e)}"
         
         return analysis_result
     
-    def _format_summary_prompt(self, static_results: Dict[str, Any], filename: str) -> str:
-        """Format prompt cho LLM summary"""
+    def _generate_with_provider(self, 
+                               prompt: str,
+                               system_prompt: Optional[str] = None,
+                               **kwargs) -> LLMResponse:
+        """Generate response using configured LLM provider"""
+        return self.llm_provider.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            **kwargs
+        )
+    
+    def _format_enhanced_summary_prompt(self, 
+                                       static_results: Dict[str, Any], 
+                                       filename: str,
+                                       rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format enhanced summary prompt với RAG context"""
         issues = static_results.get('static_issues', {})
         metrics = static_results.get('metrics', {})
         suggestions = static_results.get('suggestions', [])
@@ -212,7 +343,16 @@ class LLMOrchestratorAgent:
             if issue_list:
                 issues_summary.append(f"- {issue_type.replace('_', ' ').title()}: {len(issue_list)} issues")
         
-        prompt = f"""Bạn là một chuyên gia code review. Hãy phân tích kết quả static analysis sau và tạo summary ngắn gọn.
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Relevant Code Context từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:100]}..." for chunk in rag_context['relevant_chunks'][:3]])}"""
+        
+        prompt = f"""Bạn là một chuyên gia code review với kinh nghiệm sâu về software engineering best practices. 
+Hãy phân tích kết quả static analysis sau và tạo summary ngắn gọn nhưng sâu sắc.
 
 File: {filename}
 Total Issues: {total_issues}
@@ -226,15 +366,22 @@ Code Quality Metrics:
 - Cyclomatic Complexity: {metrics.get('cyclomatic_complexity', 'N/A')}
 - Lines of Code: {metrics.get('lines_of_code', 'N/A')}
 
-Existing Suggestions: {len(suggestions)} suggestions
+Existing Suggestions: {len(suggestions)} suggestions{rag_context_text}
 
-Hãy tạo một summary ngắn gọn (2-3 câu) về tình trạng code quality và những điểm cần chú ý nhất."""
+Hãy tạo một summary ngắn gọn (3-4 câu) về:
+1. Tình trạng tổng thể của code quality
+2. Những điểm cần chú ý nhất
+3. Mức độ ưu tiên của việc refactor
+4. Khuyến nghị tổng quát"""
         
         return prompt
     
-    def _format_detailed_analysis_prompt(self, static_results: Dict[str, Any], 
-                                       code_content: str, filename: str) -> str:
-        """Format prompt cho detailed analysis"""
+    def _format_chain_of_thought_analysis_prompt(self, 
+                                                static_results: Dict[str, Any], 
+                                                code_content: str, 
+                                                filename: str,
+                                                rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format Chain-of-Thought analysis prompt"""
         issues = static_results.get('static_issues', {})
         
         # Get most critical issues
@@ -243,26 +390,56 @@ Hãy tạo một summary ngắn gọn (2-3 câu) về tình trạng code quality
             for issue in issue_list[:3]:  # Top 3 issues per type
                 critical_issues.append(f"- {issue_type}: {issue.get('message', 'Unknown issue')} (Line {issue.get('line', '?')})")
         
-        prompt = f"""Bạn là một senior developer đang review code. Hãy phân tích chi tiết code sau dựa trên static analysis findings.
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Related Code Patterns từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:150]}..." for chunk in rag_context['relevant_chunks'][:2]])}"""
+        
+        prompt = f"""Bạn là một senior software architect đang thực hiện deep code review. 
+Sử dụng Chain-of-Thought reasoning để phân tích code một cách có hệ thống.
 
 File: {filename}
 
 Critical Issues Found:
 {chr(10).join(critical_issues[:10]) if critical_issues else "- Không có critical issues"}
 
-Hãy phân tích:
-1. Code structure và organization
-2. Potential bugs hoặc security issues
-3. Performance implications
-4. Maintainability concerns
-5. Best practices compliance
+Code to Analyze:
+```
+{code_content[:2000]}{'...' if len(code_content) > 2000 else ''}
+```{rag_context_text}
 
-Đưa ra phân tích chi tiết và constructive feedback."""
+Hãy thực hiện Chain-of-Thought analysis theo các bước sau:
+
+**Bước 1: Code Structure Analysis**
+- Phân tích kiến trúc và organization của code
+- Đánh giá design patterns được sử dụng
+- Xác định coupling và cohesion
+
+**Bước 2: Issue Impact Assessment**
+- Phân tích từng issue về mức độ nghiêm trọng
+- Đánh giá impact đến maintainability, performance, security
+- Xác định root causes
+
+**Bước 3: Risk Evaluation**
+- Đánh giá rủi ro khi không fix các issues
+- Xác định dependencies và side effects
+- Ước tính effort để fix
+
+**Bước 4: Solution Strategy**
+- Đề xuất approach để giải quyết issues
+- Ưu tiên thứ tự fix
+- Đề xuất refactoring strategy
+
+Hãy trình bày analysis theo format trên với reasoning rõ ràng cho mỗi bước."""
         
         return prompt
     
-    def _format_priority_issues_prompt(self, static_results: Dict[str, Any]) -> str:
-        """Format prompt để identify priority issues"""
+    def _format_enhanced_priority_issues_prompt(self, static_results: Dict[str, Any], 
+                                               rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format enhanced priority issues prompt với RAG context"""
         issues = static_results.get('static_issues', {})
         
         all_issues = []
@@ -282,26 +459,68 @@ Hãy phân tích:
         for issue in all_issues[:10]:  # Top 10 issues
             issues_text.append(f"- {issue['type']}: {issue['message']} (Line {issue['line']})")
         
-        prompt = f"""Bạn là một tech lead đang prioritize issues để fix. Dựa trên danh sách issues sau, hãy identify top 5 priority issues cần fix ngay.
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Similar Issues từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:120]}..." for chunk in rag_context['relevant_chunks'][:2]])}"""
+        
+        prompt = f"""Bạn là một tech lead với kinh nghiệm về software architecture đang prioritize issues để fix. 
+Dựa trên danh sách issues sau và context từ codebase, hãy identify top 5 priority issues cần fix ngay.
 
 Issues Found:
-{chr(10).join(issues_text) if issues_text else "- Không có issues"}
+{chr(10).join(issues_text) if issues_text else "- Không có issues"}{rag_context_text}
 
 Hãy list top 5 priority issues theo format:
-1. [Issue Type] - [Brief Description] - [Why Priority]
-2. [Issue Type] - [Brief Description] - [Why Priority]
+1. [Issue Type] - [Brief Description] - [Why Priority] - [Impact Level]
+2. [Issue Type] - [Brief Description] - [Why Priority] - [Impact Level]
 ...
 
-Focus vào issues có impact cao nhất đến code quality, security, hoặc maintainability."""
+Focus vào issues có impact cao nhất đến code quality, security, maintainability, và performance."""
         
         return prompt
     
-    def _format_recommendations_prompt(self, static_results: Dict[str, Any]) -> str:
-        """Format prompt cho recommendations"""
+    def _format_chain_of_thought_solution_prompt(self, static_results: Dict[str, Any], 
+                                                code_content: str,
+                                                rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format Chain-of-Thought solution prompt"""
+        issues = static_results.get('static_issues', {})
+        
+        # Extract key issues for solution
+        solution_parts = []
+        for issue_type, issue_list in issues.items():
+            for issue in issue_list[:3]:  # Top 3 issues per type
+                solution_parts.append(f"- {issue_type}: {issue.get('message', 'Unknown issue')} (Line {issue.get('line', '?')})")
+        
+        prompt = f"""Bạn là một senior developer đang đề xuất solutions để fix issues được phát hiện.
+
+Issues Found:
+{chr(10).join(solution_parts) if solution_parts else "- Không có issues"}
+
+Hãy đề xuất 5-7 specific solutions để fix issues được phát hiện.
+
+Format: 
+- [Solution] - [How to implement] - [Expected benefit]"""
+        
+        return prompt
+    
+    def _format_enhanced_recommendations_prompt(self, static_results: Dict[str, Any], 
+                                               rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format enhanced recommendations prompt với RAG context"""
         metrics = static_results.get('metrics', {})
         suggestions = static_results.get('suggestions', [])
         
-        prompt = f"""Bạn là một software architect đang đưa ra recommendations để improve codebase.
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Best Practices từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:100]}..." for chunk in rag_context['relevant_chunks'][:3]])}"""
+        
+        prompt = f"""Bạn là một software architect với kinh nghiệm về enterprise software development đang đưa ra recommendations để improve codebase.
 
 Current Metrics:
 - Quality Score: {metrics.get('code_quality_score', 'N/A')}/100
@@ -309,7 +528,7 @@ Current Metrics:
 - Comment Ratio: {metrics.get('comment_ratio', 'N/A')}
 
 Existing Suggestions:
-{chr(10).join(f"- {s}" for s in suggestions[:5]) if suggestions else "- Không có suggestions"}
+{chr(10).join(f"- {s}" for s in suggestions[:5]) if suggestions else "- Không có suggestions"}{rag_context_text}
 
 Hãy đưa ra 5-7 actionable recommendations để improve code quality, bao gồm:
 1. Immediate actions (có thể làm ngay)
@@ -317,36 +536,48 @@ Hãy đưa ra 5-7 actionable recommendations để improve code quality, bao g�
 3. Long-term architectural changes (nếu cần)
 
 Format: 
-- [Recommendation] - [Expected Impact] - [Effort Level: Low/Medium/High]"""
+- [Recommendation] - [Expected Impact] - [Effort Level: Low/Medium/High] - [Priority: High/Medium/Low]"""
         
         return prompt
     
-    def _format_quality_assessment_prompt(self, static_results: Dict[str, Any]) -> str:
-        """Format prompt cho overall quality assessment"""
+    def _format_enhanced_quality_assessment_prompt(self, static_results: Dict[str, Any], 
+                                                   rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format enhanced quality assessment prompt với RAG context"""
         metrics = static_results.get('metrics', {})
         issues = static_results.get('static_issues', {})
         
         total_issues = sum(len(issue_list) for issue_list in issues.values())
         
-        prompt = f"""Bạn là một code quality expert. Hãy đánh giá overall quality của code dựa trên metrics sau:
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Quality Benchmarks từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:100]}..." for chunk in rag_context['relevant_chunks'][:2]])}"""
+        
+        prompt = f"""Bạn là một code quality expert với kinh nghiệm về software engineering standards. 
+Hãy đánh giá overall quality của code dựa trên metrics sau và context từ codebase.
 
 Quality Metrics:
 - Overall Score: {metrics.get('code_quality_score', 'N/A')}/100
 - Maintainability: {metrics.get('maintainability_index', 'N/A')}/100
 - Complexity: {metrics.get('cyclomatic_complexity', 'N/A')}
 - Total Issues: {total_issues}
-- Lines of Code: {metrics.get('lines_of_code', 'N/A')}
+- Lines of Code: {metrics.get('lines_of_code', 'N/A')}{rag_context_text}
 
-Hãy đưa ra assessment ngắn gọn (3-4 câu) về:
-1. Overall code quality level (Excellent/Good/Fair/Poor)
-2. Main strengths
-3. Key areas for improvement
-4. Readiness for production (nếu applicable)"""
+Hãy đưa ra assessment ngắn gọn (4-5 câu) về:
+1. Overall code quality level (Excellent/Good/Fair/Poor) với justification
+2. Main strengths và competitive advantages
+3. Key areas for improvement với specific recommendations
+4. Readiness for production và risk assessment
+5. Comparison với industry standards"""
         
         return prompt
     
-    def _format_improvement_suggestions_prompt(self, static_results: Dict[str, Any]) -> str:
-        """Format prompt cho improvement suggestions"""
+    def _format_enhanced_improvement_suggestions_prompt(self, static_results: Dict[str, Any], 
+                                                       rag_context: Optional[Dict[str, Any]]) -> str:
+        """Format enhanced improvement suggestions prompt với RAG context"""
         issues = static_results.get('static_issues', {})
         metrics = static_results.get('metrics', {})
         
@@ -361,18 +592,28 @@ Hãy đưa ra assessment ngắn gọn (3-4 câu) về:
         if metrics.get('maintainability_index', 100) < 60:
             problem_areas.append("Maintainability")
         
-        prompt = f"""Bạn là một senior developer mentor. Dựa trên analysis results, hãy suggest concrete improvement steps.
+        # Add RAG context if available
+        rag_context_text = ""
+        if rag_context and rag_context.get('relevant_chunks'):
+            rag_context_text = f"""
+
+Improvement Patterns từ codebase:
+{chr(10).join([f"- {chunk.get('text', '')[:120]}..." for chunk in rag_context['relevant_chunks'][:3]])}"""
+        
+        prompt = f"""Bạn là một senior developer mentor với kinh nghiệm về code refactoring và best practices. 
+Dựa trên analysis results và patterns từ codebase, hãy suggest concrete improvement steps.
 
 Main Problem Areas: {', '.join(problem_areas) if problem_areas else 'None identified'}
 
-Current Quality Score: {metrics.get('code_quality_score', 'N/A')}/100
+Current Quality Score: {metrics.get('code_quality_score', 'N/A')}/100{rag_context_text}
 
 Hãy suggest 5-6 specific improvement actions theo format:
-1. [Action] - [How to implement] - [Expected benefit]
-2. [Action] - [How to implement] - [Expected benefit]
+1. [Action] - [How to implement] - [Expected benefit] - [Timeline]
+2. [Action] - [How to implement] - [Expected benefit] - [Timeline]
 ...
 
-Focus vào actionable steps mà developer có thể implement ngay để improve code quality."""
+Focus vào actionable steps mà developer có thể implement ngay để improve code quality, 
+với reference đến successful patterns từ codebase."""
         
         return prompt
     
@@ -442,6 +683,27 @@ Focus vào actionable steps mà developer có thể implement ngay để improve
         
         return recommendations
     
+    def _parse_solution_suggestions(self, llm_response: str) -> List[Dict[str, str]]:
+        """Parse LLM response thành structured solution suggestions"""
+        suggestions = []
+        lines = llm_response.strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if line and (line.startswith('-') or line[0].isdigit()):
+                # Remove bullet points/numbering
+                clean_line = line.lstrip('0123456789.- ')
+                if ' - ' in clean_line:
+                    parts = clean_line.split(' - ')
+                    if len(parts) >= 2:
+                        suggestions.append({
+                            'solution': parts[0].strip(),
+                            'implementation': parts[1].strip() if len(parts) > 1 else '',
+                            'benefit': parts[2].strip() if len(parts) > 2 else ''
+                        })
+        
+        return suggestions
+    
     def _parse_improvement_suggestions(self, llm_response: str) -> List[Dict[str, str]]:
         """Parse LLM response thành structured improvement suggestions"""
         suggestions = []
@@ -478,7 +740,7 @@ Focus vào actionable steps mà developer có thể implement ngay để improve
     def check_llm_health(self) -> bool:
         """Check if LLM service is available"""
         try:
-            return self.llm_caller.check_health()
+            return self.llm_provider.check_health()
         except Exception as e:
             self.logger.error(f"LLM health check failed: {e}")
             return False
@@ -486,28 +748,34 @@ Focus vào actionable steps mà developer có thể implement ngay để improve
     def get_available_models(self) -> List[str]:
         """Get list of available LLM models"""
         try:
-            return self.llm_caller.list_models()
+            return self.llm_provider.list_models()
         except Exception as e:
             self.logger.error(f"Failed to get available models: {e}")
             return []
 
 
 # Convenience functions for LangGraph integration
-def create_llm_orchestrator_agent(model: Union[str, OllamaModel] = OllamaModel.CODELLAMA,
-                                 base_url: str = "http://localhost:11434",
-                                 timeout: int = 120) -> LLMOrchestratorAgent:
+def create_llm_orchestrator_agent(provider: str = "ollama",
+                                 model: str = "codellama",
+                                 rag_context_agent: Optional[RAGContextAgent] = None,
+                                 enable_rag: bool = True,
+                                 enable_chain_of_thought: bool = True,
+                                 **provider_kwargs) -> LLMOrchestratorAgent:
     """
     Factory function để tạo LLMOrchestratorAgent
     
     Args:
-        model: LLM model để sử dụng
-        base_url: Ollama server URL
-        timeout: Request timeout
+        provider: LLM provider (ollama, openai, gemini)
+        model: Model name
+        rag_context_agent: RAGContextAgent instance (optional)
+        enable_rag: Enable RAG context retrieval
+        enable_chain_of_thought: Enable Chain-of-Thought prompting
+        **provider_kwargs: Additional provider-specific arguments
         
     Returns:
         LLMOrchestratorAgent instance
     """
-    return LLMOrchestratorAgent(model=model, base_url=base_url, timeout=timeout)
+    return LLMOrchestratorAgent(provider=provider, model=model, rag_context_agent=rag_context_agent, enable_rag=enable_rag, enable_chain_of_thought=enable_chain_of_thought, **provider_kwargs)
 
 
 def llm_orchestrator_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -591,8 +859,10 @@ class Calculator:
         # Test LLMOrchestratorAgent
         agent = create_llm_orchestrator_agent()
         
-        print(f"🔗 LLM Model: {agent.llm_caller.model}")
-        print(f"🌐 Base URL: {agent.llm_caller.base_url}")
+        print(f"🔗 LLM Provider: {agent.llm_provider.__class__.__name__}")
+        print(f"🔗 LLM Model: {agent.llm_provider.model}")
+        print(f"🤖 RAG Enabled: {agent.enable_rag}")
+        print(f"🧠 Chain-of-Thought Enabled: {agent.enable_chain_of_thought}")
         
         # Check health
         if agent.check_llm_health():
@@ -628,8 +898,18 @@ class Calculator:
                     print(f"\n🔧 Improvement Suggestions ({len(analysis.get('improvement_suggestions', []))}):")
                     for i, suggestion in enumerate(analysis.get('improvement_suggestions', [])[:3], 1):
                         print(f"  {i}. {suggestion.get('action', 'N/A')}")
+                    
+                    if analysis.get('solution_suggestions'):
+                        print(f"\n💡 Solution Suggestions ({len(analysis.get('solution_suggestions', []))}):")
+                        for i, solution in enumerate(analysis.get('solution_suggestions', [])[:3], 1):
+                            print(f"  {i}. {solution.get('solution', 'N/A')}")
+                    
+                    print(f"\n📊 Enhanced Features:")
+                    print(f"  🤖 RAG Context Used: {analysis.get('rag_context_used', False)}")
+                    print(f"  🧠 Chain-of-Thought: {analysis.get('llm_metadata', {}).get('chain_of_thought_enabled', False)}")
+                    print(f"  🔗 Provider: {analysis.get('llm_metadata', {}).get('provider', 'Unknown')}")
             
-            print("\n✅ Demo completed successfully!")
+            print("\n✅ Enhanced demo completed successfully!")
             
         else:
             print("❌ LLM service is not available. Please check Ollama server.")

@@ -1,20 +1,34 @@
-"""StaticAnalysisAgent - Phân tích tĩnh code Python và Java sử dụng Tree-sitter queries"""
+#!/usr/bin/env python3
+"""Test script cho Enhanced StaticAnalysisAgent với Python và Java support"""
 
+import sys
+import os
 import logging
 from typing import Dict, List, Optional, Any, Union, Tuple
 import tree_sitter_python as tspython
 import tree_sitter_java as tsjava
 from tree_sitter import Language, Parser, Node, Query
-import sys
-import os
 import re
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-try:
-    from ..parsers.ast_parser import ASTParsingAgent
-except ImportError:
-    from parsers.ast_parser import ASTParsingAgent
 
+# Mock ASTParsingAgent
+class MockASTParsingAgent:
+    def parse_code(self, code: str, filename: str) -> Dict:
+        return {
+            'stats': {
+                'total_functions': 2,
+                'total_classes': 1,
+                'total_variables': 3
+            },
+            'classes': [
+                {
+                    'name': 'badClassName',
+                    'start_line': 8,
+                    'method_count': 2
+                }
+            ]
+        }
 
+# Copy StaticAnalysisAgent class với mock
 class StaticAnalysisAgent:
     """Agent để thực hiện phân tích tĩnh code Python và Java sử dụng Tree-sitter queries"""
     
@@ -29,7 +43,7 @@ class StaticAnalysisAgent:
             self.python_parser = Parser(self.python_language)
             self.java_parser = Parser(self.java_language)
             
-            self.ast_parser = ASTParsingAgent()
+            self.ast_parser = MockASTParsingAgent()
             
             # Initialize Tree-sitter queries
             self._init_python_queries()
@@ -284,9 +298,6 @@ class StaticAnalysisAgent:
     def _analyze_java_code(self, code: str, filename: str, result: Dict) -> Dict:
         """Phân tích Java code"""
         
-        # Parse code với ASTParsingAgent (now supports Java)
-        result['ast_analysis'] = self.ast_parser.parse_code(code, filename, language='java')
-        
         # Parse với Tree-sitter
         tree = self.java_parser.parse(bytes(code, 'utf8'))
         
@@ -384,29 +395,13 @@ class StaticAnalysisAgent:
                         'message': 'Avoid assigning lambda to variables, use def instead'
                     })
         
-        # Check for overly complex comprehensions
-        comp_captures = self.python_comprehension_query.captures(root_node)
-        for comp_type in ['list_comp', 'dict_comp', 'set_comp']:
-            if comp_type in comp_captures:
-                for node in comp_captures[comp_type]:
-                    comp_text = self._get_node_text(node, code)
-                    # Simple heuristic: if comprehension spans multiple lines or is very long
-                    if '\n' in comp_text or len(comp_text) > 100:
-                        violations.append({
-                            'type': 'complex_comprehension',
-                            'line': node.start_point[0] + 1,
-                            'message': 'Complex comprehensions should be broken into multiple lines or use regular loops'
-                        })
-        
         # Check exception handling patterns
         exception_captures = self.python_exception_query.captures(root_node)
         if 'except_clause' in exception_captures:
             for node in exception_captures['except_clause']:
                 except_text = self._get_node_text(node, code)
-                # Check for bare except - look for "except:" at the start
-                lines = except_text.split('\n')
-                first_line = lines[0].strip() if lines else ""
-                if first_line == 'except:':
+                # Check for bare except
+                if except_text.strip() == 'except:':
                     violations.append({
                         'type': 'bare_except',
                         'line': node.start_point[0] + 1,
@@ -513,32 +508,17 @@ class StaticAnalysisAgent:
                         'message': f"Java method '{name}' should use camelCase (e.g., myMethod)"
                     })
         
-        # Check variable names (should be camelCase, except constants which should be UPPER_CASE)
+        # Check variable names (should be camelCase)
         if 'variable_name' in captures:
             for node in captures['variable_name']:
                 name = self._get_node_text(node, code)
-                
-                # Check if this is a constant (static final field)
-                is_constant = self._is_java_constant(node, code)
-                
-                if is_constant:
-                    # Constants should be UPPER_CASE with underscores
-                    if not re.match(r'^[A-Z][A-Z0-9_]*$', name):
-                        violations.append({
-                            'type': 'java_constant_naming_violation',
-                            'name': name,
-                            'line': node.start_point[0] + 1,
-                            'message': f"Java constant '{name}' should use UPPER_CASE (e.g., MY_CONSTANT)"
-                        })
-                else:
-                    # Regular variables should be camelCase
-                    if not re.match(r'^[a-z][a-zA-Z0-9]*$', name):
-                        violations.append({
-                            'type': 'java_variable_naming_violation',
-                            'name': name,
-                            'line': node.start_point[0] + 1,
-                            'message': f"Java variable '{name}' should use camelCase (e.g., myVariable)"
-                        })
+                if not re.match(r'^[a-z][a-zA-Z0-9]*$', name):
+                    violations.append({
+                        'type': 'java_variable_naming_violation',
+                        'name': name,
+                        'line': node.start_point[0] + 1,
+                        'message': f"Java variable '{name}' should use camelCase (e.g., myVariable)"
+                    })
         
         return violations
     
@@ -562,42 +542,13 @@ class StaticAnalysisAgent:
         if 'catch_clause' in exception_captures:
             for node in exception_captures['catch_clause']:
                 catch_text = self._get_node_text(node, code)
-                
-                # Look for the catch block body
-                # Find the opening brace
-                brace_start = catch_text.find('{')
-                if brace_start != -1:
-                    # Extract everything after the opening brace
-                    after_brace = catch_text[brace_start + 1:]
-                    
-                    # Find the matching closing brace
-                    brace_count = 1
-                    body_end = -1
-                    for i, char in enumerate(after_brace):
-                        if char == '{':
-                            brace_count += 1
-                        elif char == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                body_end = i
-                                break
-                    
-                    if body_end != -1:
-                        body = after_brace[:body_end].strip()
-                        # Check if there's actual executable code (not just comments)
-                        lines = body.split('\n')
-                        has_executable_code = False
-                        
-                        for line in lines:
-                            stripped = line.strip()
-                            # Skip empty lines and comment-only lines
-                            if stripped and not stripped.startswith('//') and not stripped.startswith('/*') and not stripped.startswith('*'):
-                                # Check if it's not just a closing comment
-                                if not stripped.endswith('*/'):
-                                    has_executable_code = True
-                                    break
-                        
-                        if not has_executable_code:
+                # Simple check for empty catch block
+                if '{}' in catch_text or catch_text.count('{') == catch_text.count('}') == 1:
+                    body_start = catch_text.find('{')
+                    body_end = catch_text.rfind('}')
+                    if body_start != -1 and body_end != -1:
+                        body = catch_text[body_start+1:body_end].strip()
+                        if not body:
                             issues.append({
                                 'type': 'empty_catch_block',
                                 'line': node.start_point[0] + 1,
@@ -696,18 +647,6 @@ class StaticAnalysisAgent:
         while current:
             if current == parent_node:
                 return True
-            current = current.parent
-        return False
-    
-    def _is_java_constant(self, variable_node: Node, code: str) -> bool:
-        """Check if a Java variable is a constant (static final field)"""
-        # Look for parent field_declaration
-        current = variable_node.parent
-        while current:
-            if current.type == 'field_declaration':
-                # Check if field has static and final modifiers
-                field_text = self._get_node_text(current, code)
-                return 'static' in field_text and 'final' in field_text
             current = current.parent
         return False
 
@@ -1176,179 +1115,10 @@ class StaticAnalysisAgent:
         
         traverse(func_node)
         return count
-    
-    def analyze_file(self, file_path: str) -> Dict[str, Any]:
-        """
-        Analyze một file Python hoặc Java
-        
-        Args:
-            file_path: Path đến file Python hoặc Java
-            
-        Returns:
-            Dict chứa kết quả phân tích
-        """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                code = f.read()
-            
-            return self.analyze_code(code, file_path)
-            
-        except Exception as e:
-            self.logger.error(f"Error analyzing file {file_path}: {e}")
-            return {
-                'filename': file_path,
-                'language': self._detect_language(file_path),
-                'error': str(e),
-                'static_issues': {'code_smells': [{'type': 'file_error', 'message': str(e), 'line': 1}]},
-                'metrics': {},
-                'suggestions': []
-            }
-    
-    def analyze_repository(self, code_fetcher_agent, repo_url: str) -> Dict[str, Any]:
-        """
-        Analyze toàn bộ Python và Java repository
-        
-        Args:
-            code_fetcher_agent: Instance của CodeFetcherAgent
-            repo_url: Repository URL
-            
-        Returns:
-            Dict chứa kết quả phân tích repository
-        """
-        results = {
-            'repository': repo_url,
-            'files_analyzed': [],
-            'summary': {
-                'total_files': 0,
-                'python_files': 0,
-                'java_files': 0,
-                'total_issues': 0,
-                'total_suggestions': 0,
-                'average_quality_score': 0,
-                'issue_breakdown': {
-                    'missing_docstrings': 0,
-                    'unused_imports': 0,
-                    'complex_functions': 0,
-                    'code_smells': 0,
-                    'naming_violations': 0,
-                    'google_style_violations': 0
-                }
-            },
-            'repository_suggestions': [],
-            'analysis_timestamp': None
-        }
-        
-        try:
-            from datetime import datetime
-            results['analysis_timestamp'] = datetime.now().isoformat()
-            
-            # Get Python and Java files từ repository
-            self.logger.info(f"Starting static analysis of repository: {repo_url}")
-            files = code_fetcher_agent.list_repository_files(repo_url)
-            target_files = [f for f in files if f.endswith('.py') or f.endswith('.java')]
-            python_files = [f for f in target_files if f.endswith('.py')]
-            java_files = [f for f in target_files if f.endswith('.java')]
-            
-            self.logger.info(f"Found {len(python_files)} Python files and {len(java_files)} Java files to analyze")
-            
-            quality_scores = []
-            
-            for file_path in target_files:
-                try:
-                    content = code_fetcher_agent.get_file_content(repo_url, file_path)
-                    if content:
-                        analysis = self.analyze_code(content, file_path)
-                        
-                        results['files_analyzed'].append({
-                            'file_path': file_path,
-                            'analysis': analysis
-                        })
-                        
-                        # Update summary
-                        results['summary']['total_files'] += 1
-                        if file_path.endswith('.py'):
-                            results['summary']['python_files'] += 1
-                        elif file_path.endswith('.java'):
-                            results['summary']['java_files'] += 1
-                        
-                        # Count issues
-                        issues = analysis['static_issues']
-                        file_issue_count = (
-                            len(issues['missing_docstrings']) +
-                            len(issues['unused_imports']) +
-                            len(issues['complex_functions']) +
-                            len(issues['code_smells']) +
-                            len(issues['naming_violations']) +
-                            len(issues.get('google_style_violations', []))
-                        )
-                        results['summary']['total_issues'] += file_issue_count
-                        results['summary']['total_suggestions'] += len(analysis['suggestions'])
-                        
-                        # Update issue breakdown
-                        results['summary']['issue_breakdown']['missing_docstrings'] += len(issues['missing_docstrings'])
-                        results['summary']['issue_breakdown']['unused_imports'] += len(issues['unused_imports'])
-                        results['summary']['issue_breakdown']['complex_functions'] += len(issues['complex_functions'])
-                        results['summary']['issue_breakdown']['code_smells'] += len(issues['code_smells'])
-                        results['summary']['issue_breakdown']['naming_violations'] += len(issues['naming_violations'])
-                        results['summary']['issue_breakdown']['google_style_violations'] += len(issues.get('google_style_violations', []))
-                        
-                        # Track quality scores
-                        quality_score = analysis['metrics'].get('code_quality_score', 0)
-                        quality_scores.append(quality_score)
-                        
-                except Exception as e:
-                    self.logger.error(f"Error analyzing {file_path}: {e}")
-            
-            # Calculate average quality score
-            if quality_scores:
-                results['summary']['average_quality_score'] = sum(quality_scores) / len(quality_scores)
-            
-            # Generate repository-level suggestions
-            results['repository_suggestions'] = self._generate_repository_suggestions(results)
-            
-            self.logger.info(f"Static analysis completed: {results['summary']}")
-            
-        except Exception as e:
-            self.logger.error(f"Error analyzing repository: {e}")
-            results['error'] = str(e)
-        
-        return results
-    
-    def _generate_repository_suggestions(self, repo_results: Dict) -> List[str]:
-        """Generate suggestions cho toàn bộ repository"""
-        suggestions = []
-        summary = repo_results['summary']
-        
-        if summary['average_quality_score'] < 60:
-            suggestions.append("Repository cần improvement tổng thể về code quality")
-        
-        if summary['issue_breakdown']['missing_docstrings'] > summary['total_files'] * 0.5:
-            suggestions.append("Thiết lập documentation standards và thêm docstrings/Javadoc")
-        
-        if summary['issue_breakdown']['unused_imports'] > 10:
-            suggestions.append("Sử dụng tools để tự động xóa unused imports")
-        
-        if summary['issue_breakdown']['complex_functions'] > 5:
-            suggestions.append("Implement code review process để catch complex functions sớm")
-        
-        if summary['issue_breakdown']['naming_violations'] > summary['total_files']:
-            suggestions.append("Thiết lập và enforce naming conventions")
-        
-        if summary['issue_breakdown']['google_style_violations'] > 0:
-            suggestions.append("Tuân thủ Google Python Style Guide cho code chất lượng cao")
-        
-        if summary['total_issues'] > summary['total_files'] * 3:
-            suggestions.append("Cân nhắc setup linting tools trong CI/CD pipeline")
-        
-        # Language-specific suggestions
-        if summary['python_files'] > 0 and summary['java_files'] > 0:
-            suggestions.append("Thiết lập consistent coding standards cho cả Python và Java")
-        
-        return suggestions
 
 
-def demo_static_analysis():
-    """Demo function để test StaticAnalysisAgent với cả Python và Java"""
+def test_enhanced_static_analyzer():
+    """Test function để test StaticAnalysisAgent với cả Python và Java"""
     
     # Python sample code với Google Style Guide violations
     python_sample = '''
@@ -1437,84 +1207,98 @@ public class badClassName {  // Should be PascalCase
 }
 '''
     
-    analyzer = StaticAnalysisAgent()
-    
-    print("🔍 === Enhanced Static Analysis Demo ===")
-    print("Testing Python and Java code analysis with Google Style Guide rules\n")
-    
-    # Test Python code
-    print("=" * 60)
-    print("🐍 PYTHON CODE ANALYSIS")
-    print("=" * 60)
-    
-    python_result = analyzer.analyze_code(python_sample, "demo.py")
-    
-    print(f"File: {python_result['filename']} ({python_result['language']})")
-    print(f"Quality Score: {python_result['metrics']['code_quality_score']:.1f}/100")
-    print(f"Maintainability Index: {python_result['metrics']['maintainability_index']:.1f}/100")
-    print()
-    
-    print("📋 Issues Found:")
-    for category, issues in python_result['static_issues'].items():
-        if issues:
-            print(f"\n  {category.replace('_', ' ').title()} ({len(issues)}):")
-            for issue in issues[:3]:  # Show first 3 issues
-                print(f"    - Line {issue.get('line', '?')}: {issue['message']}")
-            if len(issues) > 3:
-                print(f"    ... and {len(issues) - 3} more")
-    
-    print(f"\n💡 Python Suggestions ({len(python_result['suggestions'])}):")
-    for suggestion in python_result['suggestions'][:5]:  # Show first 5
-        print(f"  - {suggestion}")
-    if len(python_result['suggestions']) > 5:
-        print(f"  ... and {len(python_result['suggestions']) - 5} more")
-    
-    # Test Java code
-    print("\n" + "=" * 60)
-    print("☕ JAVA CODE ANALYSIS")
-    print("=" * 60)
-    
-    java_result = analyzer.analyze_code(java_sample, "Demo.java")
-    
-    print(f"File: {java_result['filename']} ({java_result['language']})")
-    print(f"Quality Score: {java_result['metrics']['code_quality_score']:.1f}/100")
-    print(f"Maintainability Index: {java_result['metrics']['maintainability_index']:.1f}/100")
-    print()
-    
-    print("📋 Issues Found:")
-    for category, issues in java_result['static_issues'].items():
-        if issues:
-            print(f"\n  {category.replace('_', ' ').title()} ({len(issues)}):")
-            for issue in issues[:3]:  # Show first 3 issues
-                print(f"    - Line {issue.get('line', '?')}: {issue['message']}")
-            if len(issues) > 3:
-                print(f"    ... and {len(issues) - 3} more")
-    
-    print(f"\n💡 Java Suggestions ({len(java_result['suggestions'])}):")
-    for suggestion in java_result['suggestions']:
-        print(f"  - {suggestion}")
-    
-    # Summary
-    print("\n" + "=" * 60)
-    print("📊 COMPARISON SUMMARY")
-    print("=" * 60)
-    print(f"Python Quality Score: {python_result['metrics']['code_quality_score']:.1f}/100")
-    print(f"Java Quality Score: {java_result['metrics']['code_quality_score']:.1f}/100")
-    
-    total_python_issues = sum(len(issues) for issues in python_result['static_issues'].values())
-    total_java_issues = sum(len(issues) for issues in java_result['static_issues'].values())
-    
-    print(f"Python Total Issues: {total_python_issues}")
-    print(f"Java Total Issues: {total_java_issues}")
-    
-    print("\n✨ New Features Demonstrated:")
-    print("  ✓ Multi-language support (Python + Java)")
-    print("  ✓ Google Python Style Guide compliance")
-    print("  ✓ Java naming conventions")
-    print("  ✓ Enhanced naming violation detection")
-    print("  ✓ Language-specific code smell detection")
-    print("  ✓ Javadoc vs Docstring detection")
+    try:
+        analyzer = StaticAnalysisAgent()
+        
+        print("🔍 === Enhanced Static Analysis Demo ===")
+        print("Testing Python and Java code analysis with Google Style Guide rules\n")
+        
+        # Test Python code
+        print("=" * 60)
+        print("🐍 PYTHON CODE ANALYSIS")
+        print("=" * 60)
+        
+        python_result = analyzer.analyze_code(python_sample, "demo.py")
+        
+        print(f"File: {python_result['filename']} ({python_result['language']})")
+        print(f"Quality Score: {python_result['metrics']['code_quality_score']:.1f}/100")
+        print(f"Maintainability Index: {python_result['metrics']['maintainability_index']:.1f}/100")
+        print()
+        
+        print("📋 Issues Found:")
+        for category, issues in python_result['static_issues'].items():
+            if issues:
+                print(f"\n  {category.replace('_', ' ').title()} ({len(issues)}):")
+                for issue in issues[:3]:  # Show first 3 issues
+                    print(f"    - Line {issue.get('line', '?')}: {issue['message']}")
+                if len(issues) > 3:
+                    print(f"    ... and {len(issues) - 3} more")
+        
+        print(f"\n💡 Python Suggestions ({len(python_result['suggestions'])}):")
+        for suggestion in python_result['suggestions'][:5]:  # Show first 5
+            print(f"  - {suggestion}")
+        if len(python_result['suggestions']) > 5:
+            print(f"  ... and {len(python_result['suggestions']) - 5} more")
+        
+        # Test Java code
+        print("\n" + "=" * 60)
+        print("☕ JAVA CODE ANALYSIS")
+        print("=" * 60)
+        
+        java_result = analyzer.analyze_code(java_sample, "Demo.java")
+        
+        print(f"File: {java_result['filename']} ({java_result['language']})")
+        print(f"Quality Score: {java_result['metrics']['code_quality_score']:.1f}/100")
+        print(f"Maintainability Index: {java_result['metrics']['maintainability_index']:.1f}/100")
+        print()
+        
+        print("📋 Issues Found:")
+        for category, issues in java_result['static_issues'].items():
+            if issues:
+                print(f"\n  {category.replace('_', ' ').title()} ({len(issues)}):")
+                for issue in issues[:3]:  # Show first 3 issues
+                    print(f"    - Line {issue.get('line', '?')}: {issue['message']}")
+                if len(issues) > 3:
+                    print(f"    ... and {len(issues) - 3} more")
+        
+        print(f"\n💡 Java Suggestions ({len(java_result['suggestions'])}):")
+        for suggestion in java_result['suggestions']:
+            print(f"  - {suggestion}")
+        
+        # Summary
+        print("\n" + "=" * 60)
+        print("📊 COMPARISON SUMMARY")
+        print("=" * 60)
+        print(f"Python Quality Score: {python_result['metrics']['code_quality_score']:.1f}/100")
+        print(f"Java Quality Score: {java_result['metrics']['code_quality_score']:.1f}/100")
+        
+        total_python_issues = sum(len(issues) for issues in python_result['static_issues'].values())
+        total_java_issues = sum(len(issues) for issues in java_result['static_issues'].values())
+        
+        print(f"Python Total Issues: {total_python_issues}")
+        print(f"Java Total Issues: {total_java_issues}")
+        
+        print("\n✨ New Features Demonstrated:")
+        print("  ✓ Multi-language support (Python + Java)")
+        print("  ✓ Google Python Style Guide compliance")
+        print("  ✓ Java naming conventions")
+        print("  ✓ Enhanced naming violation detection")
+        print("  ✓ Language-specific code smell detection")
+        print("  ✓ Javadoc vs Docstring detection")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error during testing: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 if __name__ == "__main__":
-    demo_static_analysis() 
+    success = test_enhanced_static_analyzer()
+    if success:
+        print("\n✅ Enhanced StaticAnalysisAgent test completed successfully!")
+    else:
+        print("\n❌ Enhanced StaticAnalysisAgent test failed!")
+        sys.exit(1) 

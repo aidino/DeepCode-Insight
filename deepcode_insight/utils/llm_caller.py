@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class OllamaModel(Enum):
     """Enum cho các model Ollama được hỗ trợ"""
-    CODELLAMA = "codellama"
+    CODELLAMA = "codellama:7b-instruct-q4_K_M"
     CODELLAMA_7B = "codellama:7b"
     CODELLAMA_13B = "codellama:13b"
     CODELLAMA_34B = "codellama:34b"

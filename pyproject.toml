@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "langgraph-demo"
+version = "0.1.0"
+description = "Demo LangGraph project with two agents passing messages"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4.0"
+langgraph = ">=0.4.7,<0.5.0"
+langchain = ">=0.3.25,<0.4.0"
+langchain-openai = ">=0.3.18,<0.4.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
